@@ -1,0 +1,159 @@
+# IOC Threat Intelligence Tool
+
+A Python command-line tool that takes an IOC (IP address, domain, or file hash),
+enriches it against multiple threat intelligence sources, and produces a
+combined risk report — with caching, batch scanning, and rate-limit handling.
+
+## Features
+
+- **Automatic IOC classification** — detects whether input is an IPv4 address,
+  domain name, or file hash (MD5/SHA1/SHA256) using regex.
+- **Multi-source enrichment**
+  - [VirusTotal](https://www.virustotal.com/) — AV vendor detection stats
+  - [AbuseIPDB](https://www.abuseipdb.com/) — abuse confidence score & report history (IPs only)
+  - [AlienVault OTX](https://otx.alienvault.com/) — threat report ("pulse") mentions
+- **Weighted risk scoring** — combines all three sources into a single 0–100
+  risk score and LOW / MEDIUM / HIGH verdict, weighted toward the strongest
+  reputation signals (VirusTotal detections, AbuseIPDB confidence) rather than
+  weaker context signals (OTX mention count).
+- **Local caching** — results are cached for 6 hours in `cache.json` to avoid
+  wasting API quota on repeat lookups.
+- **Batch mode** — scan a whole list of IOCs from a text file in one run.
+- **Rate-limit handling** — automatically retries with backoff on HTTP 429
+  responses, and paces batch requests to stay under free-tier API limits.
+
+## Requirements
+
+- Python 3.10+
+- Free API keys from:
+  - [VirusTotal](https://www.virustotal.com/gui/join-us)
+  - [AbuseIPDB](https://www.abuseipdb.com/register)
+  - [AlienVault OTX](https://otx.alienvault.com/)
+
+## Setup
+
+1. Clone the repo and enter the folder:
+   ```bash
+   git clone https://github.com/<your-username>/ioc-threat-intel-tool.git
+   cd ioc-threat-intel-tool
+   ```
+
+2. Create and activate a virtual environment:
+   ```bash
+   python -m venv venv
+   # Windows
+   venv\Scripts\activate
+   # macOS/Linux
+   source venv/bin/activate
+   ```
+
+3. Install dependencies:
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+4. Copy `.env.example` to `.env` and add your API keys:
+   ```bash
+   cp .env.example .env
+   ```
+   ```
+   VT_API_KEY=your_virustotal_key_here
+   ABUSEIPDB_API_KEY=your_abuseipdb_key_here
+   OTX_API_KEY=your_otx_key_here
+   ```
+
+## Usage
+
+**Single IOC lookup:**
+```bash
+python threat-intel-tool.py 8.8.8.8
+python threat-intel-tool.py example.com
+python threat-intel-tool.py 44d88612fea8a8f36de82e1278abb02f
+```
+
+**Batch mode** — create a text file with one IOC per line (lines starting
+with `#` are treated as comments and skipped):
+```
+# iocs.txt
+8.8.8.8
+example.com
+44d88612fea8a8f36de82e1278abb02f
+```
+```bash
+python threat-intel-tool.py --file iocs.txt
+```
+
+## Example Output
+
+```
+Classified as: ip
+Querying sources...
+╭─ Threat Intel Report ─╮
+│ IOC: 8.8.8.8          │
+│ Type: ip              │
+╰───────────────────────╯
+                    Enrichment Results
+┏━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ Source     ┃ Result                                    ┃
+┡━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
+│ VirusTotal │ malicious=0 suspicious=0 harmless=52       │
+│ AbuseIPDB  │ confidence=0% reports=204 country=US ...   │
+│ OTX        │ pulse_count=0                              │
+└────────────┴───────────────────────────────────────────┘
+╭───── Summary ─────╮
+│ Risk Score: 0/100 │
+│ Verdict: LOW RISK │
+╰───────────────────╯
+```
+
+## How the risk score works
+
+| Signal | Weight |
+|---|---|
+| VirusTotal — malicious detections | ×10 per vendor |
+| VirusTotal — suspicious detections | ×5 per vendor |
+| AbuseIPDB — abuse confidence score | ×1 (0–100 scale) |
+| OTX — pulse (report) mentions | ×2, capped at 5 pulses (10 pts max) |
+
+OTX pulse count is deliberately capped low: a high mention count reflects how
+often an IOC appears in threat reports for *any* reason (including being
+widely-used, legitimate infrastructure), not a confirmed malicious verdict —
+so it's treated as supporting context rather than a primary signal.
+
+Final score is capped at 100 and mapped to a verdict:
+- **0–29** → LOW RISK
+- **30–69** → MEDIUM RISK
+- **70–100** → HIGH RISK
+
+## Project Structure
+
+```
+ioc-threat-intel-tool/
+├── threat-intel-tool.py   # main script
+├── requirements.txt       # Python dependencies
+├── .env.example           # template for API keys (safe to commit)
+├── .env                   # your real API keys (never commit this)
+├── .gitignore
+├── cache.json             # auto-generated, local cache (not committed)
+└── README.md
+```
+
+## Known Limitations
+
+- AbuseIPDB only supports IP addresses (not domains or hashes) — this is a
+  limitation of that API, not the tool.
+- Free-tier API limits apply (VirusTotal: 4 req/min; AbuseIPDB: 1,000/day).
+  Batch mode paces requests to stay under these limits.
+- Risk scoring is a simple weighted heuristic for demonstration purposes, not
+  a production-grade ML/statistical model.
+
+## Future Improvements
+
+- Export results to Markdown/HTML/PDF reports
+- Add more sources (Shodan, GreyNoise, URLhaus)
+- SQLite-backed cache instead of JSON for larger datasets
+- Web UI / API wrapper around the CLI logic
+
+## License
+
+MIT — see [LICENSE](LICENSE).
