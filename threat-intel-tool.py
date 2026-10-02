@@ -1,14 +1,3 @@
-"""
-IOC / Threat Intelligence Tool
-Give it an IP, domain, or file hash -> queries VirusTotal, AbuseIPDB, and OTX,
-then prints a combined report.
-
-Usage:
-    python threat-intel-tool.py 8.8.8.8
-    python threat-intel-tool.py example.com
-    python threat-intel-tool.py 44d88612fea8a8f36de82e1278abb02f
-"""
-
 import os
 import re
 import sys
@@ -21,10 +10,9 @@ from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
 
-# ---------------------------------------------------------
-# Setup
-# ---------------------------------------------------------
-load_dotenv()  # reads the .env file in this folder
+# Setup api key + cache + rate limit
+
+load_dotenv()
 
 VT_API_KEY = os.getenv("VT_API_KEY")
 ABUSEIPDB_API_KEY = os.getenv("ABUSEIPDB_API_KEY")
@@ -35,10 +23,8 @@ console = Console()
 CACHE_FILE = Path("cache.json")
 CACHE_TTL_SECONDS = 6 * 60 * 60  # 6 hours
 
+# Cache 
 
-# ---------------------------------------------------------
-# Cache helpers
-# ---------------------------------------------------------
 def load_cache() -> dict:
     if not CACHE_FILE.exists():
         return {}
@@ -67,14 +53,9 @@ def store_result(ioc: str, cache: dict, data: dict) -> None:
     save_cache(cache)
 
 
-# ---------------------------------------------------------
-# Retry helper for rate-limited requests
-# ---------------------------------------------------------
+# Retry when dealing rate-limited requests (if return 429)
+
 def request_with_retry(method, url, max_retries=3, backoff_seconds=15, **kwargs):
-    """
-    Wraps requests.get/post. If the API returns 429 (rate limited),
-    waits and retries instead of giving up immediately.
-    """
     for attempt in range(1, max_retries + 1):
         resp = method(url, **kwargs)
 
@@ -82,7 +63,7 @@ def request_with_retry(method, url, max_retries=3, backoff_seconds=15, **kwargs)
             return resp
 
         if attempt == max_retries:
-            return resp  # give up, let the caller handle the final error
+            return resp  # give up after 3 failed tries
 
         wait_time = backoff_seconds * attempt  # 15s, 30s, 45s...
         console.print(
@@ -94,9 +75,8 @@ def request_with_retry(method, url, max_retries=3, backoff_seconds=15, **kwargs)
     return resp
 
 
-# ---------------------------------------------------------
-# Step 1: figure out what kind of IOC we were given
-# ---------------------------------------------------------
+# IOC types
+
 def classify_ioc(value: str) -> str:
     ipv4_pattern = r"^(\d{1,3}\.){3}\d{1,3}$"
     md5_pattern = r"^[a-fA-F0-9]{32}$"
@@ -114,9 +94,8 @@ def classify_ioc(value: str) -> str:
         return "unknown"
 
 
-# ---------------------------------------------------------
-# Step 2: query each source
-# ---------------------------------------------------------
+# query
+
 def query_virustotal(ioc: str, ioc_type: str) -> dict:
     if not VT_API_KEY:
         return {"error": "No VirusTotal API key set"}
@@ -199,29 +178,24 @@ def query_otx(ioc: str, ioc_type: str) -> dict:
         return {"error": str(e)}
 
 
-# ---------------------------------------------------------
-# Step 3: simple weighted risk score
-# ---------------------------------------------------------
+# scoring 
+
 def calculate_risk_score(vt: dict, abuse: dict, otx: dict) -> int:
     score = 0
     score += vt.get("malicious", 0) * 10
     score += vt.get("suspicious", 0) * 5
     score += abuse.get("abuse_confidence_score", 0)
 
-    # OTX pulse_count is just "how many threat reports mention this IOC" -
-    # it is NOT a malicious verdict by itself (popular infra like Cloudflare
-    # or public DNS resolvers gets mentioned a lot for unrelated reasons).
-    # Treat it as a small supporting signal, capped low, rather than a
-    # primary driver of the score.
+   
     pulse_contribution = min(otx.get("pulse_count", 0), 5) * 2  # capped at 10 points max
+    # OTX pulse_count is just "how many threat reports mention this IOC" 
 
     score += pulse_contribution
-    return min(score, 100)  # cap at 100
+    return min(score, 100)  # max 100
 
 
-# ---------------------------------------------------------
-# Step 4: print the report
-# ---------------------------------------------------------
+# report cmd output
+
 def print_report(ioc: str, ioc_type: str, vt: dict, abuse: dict, otx: dict, risk_score: int, from_cache: bool):
     cache_note = " [dim](from cache)[/dim]" if from_cache else ""
     console.print(Panel.fit(f"[bold]IOC:[/bold] {ioc}\n[bold]Type:[/bold] {ioc_type}{cache_note}", title="Threat Intel Report"))
@@ -264,9 +238,8 @@ def print_report(ioc: str, ioc_type: str, vt: dict, abuse: dict, otx: dict, risk
     console.print(Panel.fit(f"Risk Score: {risk_score}/100\nVerdict: {verdict}", title="Summary"))
 
 
-# ---------------------------------------------------------
-# Process a single IOC (used by both single and batch mode)
-# ---------------------------------------------------------
+# single IOC search (batch single the same)
+
 def process_ioc(ioc: str, cache: dict) -> dict:
     ioc_type = classify_ioc(ioc)
 
@@ -335,9 +308,10 @@ def print_batch_summary(results: list) -> None:
     console.print(table)
 
 
-# ---------------------------------------------------------
+
+
 # Main
-# ---------------------------------------------------------
+
 def main():
     if len(sys.argv) != 3 and len(sys.argv) != 2:
         console.print("[red]Usage:[/red] python threat-intel-tool.py <ip|domain|hash>")
@@ -346,7 +320,7 @@ def main():
 
     cache = load_cache()
 
-    # ---- Batch mode: python threat-intel-tool.py --file iocs.txt ----
+    # Batch mode
     if sys.argv[1] == "--file":
         if len(sys.argv) != 3:
             console.print("[red]Usage:[/red] python threat-intel-tool.py --file iocs.txt")
@@ -372,13 +346,13 @@ def main():
             result = process_ioc(ioc, cache)
             results.append(result)
             if i < len(iocs) and not result.get("from_cache"):
-                time.sleep(15)  # stay under VirusTotal's 4 requests/min free-tier limit
+                time.sleep(15)  #  VirusTotal free-tier limit is 4 requests/min
 
         console.print()
         print_batch_summary(results)
         return
 
-    # ---- Single IOC mode: python threat-intel-tool.py 8.8.8.8 ----
+    # Single IOC mode
     ioc = sys.argv[1].strip()
     result = process_ioc(ioc, cache)
 
