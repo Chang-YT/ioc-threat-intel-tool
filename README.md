@@ -21,7 +21,7 @@ OTX is trusted less because it might include innocent factors in an accident
   - [VirusTotal]
   - [AbuseIPDB]
   - [AlienVault OTX]
-  
+
 
 # batch lookup
 for example
@@ -49,7 +49,7 @@ scoring board:
 30-69 → MEDIUM RISK
 70-100 → HIGH RISK
 
-## current limitation
+# current limitation
 1 using free-tier API limits apply (VirusTotal: 4 req/min; AbuseIPDB: 1,000/day), so request much not reach these limits
 2 this risk scoring is for only demonstration purposes, and is not under production level
 
@@ -57,4 +57,4 @@ scoring board:
 
 1 export results to HTML/PDF reports
 2 add more sources? maybe---> Shodan, GreyNoise, URLhaus
-3 use SQLite-backed cache instead of JSON for bigger datasets
+3 use SQLite-backed cache instead of JSON for bigger dataset

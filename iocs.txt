@@ -4,3 +4,11 @@ google.com
 9.9.9.9
 cloudflare.com
 44d88612fea8a8f36de82e1278abb02f
+
+8.8.4.4
+1.0.0.1
+208.67.222.222
+208.67.220.220
+microsoft.com
+amazon.com
+github.com
